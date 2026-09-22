@@ -903,6 +903,55 @@ export default {
     // For any other path/method, return 404
     return new Response('Not Found', { status: 404 });
   },
+
+  async scheduled(event, env, ctx) {
+    if (!env.ALIVE_DAYS) {
+      return;
+    }
+    const aliveDays = Math.max(1, parseInt(env.ALIVE_DAYS, 10));
+    if (Number.isNaN(aliveDays)) {
+      return;
+    }
+    const anchor = Date.UTC(2026, 0, 1);
+    const daysSince = Math.floor((Date.now() - anchor) / 86400000);
+
+    if (daysSince % aliveDays !== 0) {
+      return;
+    }
+
+    const appid = env.WX_APPID;
+    const secret = env.WX_SECRET;
+    const useridStr = env.WX_USERID;
+    const template_id = env.WX_TEMPLATE_ID;
+    const base_url = env.WX_BASE_URL;
+
+    if (!appid || !secret || !useridStr || !template_id) {
+      console.error('[alive] missing env: WX_APPID, WX_SECRET, WX_USERID, WX_TEMPLATE_ID');
+      return;
+    }
+
+    try {
+      const accessToken = await getStableToken(appid, secret);
+      if (!accessToken) {
+        console.error('[alive] failed to get access token (test account may be recycled)');
+        return;
+      }
+
+      const user_list = useridStr.split('|').map(uid => uid.trim()).filter(Boolean);
+      const results = await Promise.all(user_list.map(userid =>
+        sendMessage(accessToken, userid, template_id, base_url, '保活测试', '测试账号保活心跳消息')
+      ));
+
+      const failed = results.filter(r => r.errmsg !== 'ok');
+      if (failed.length > 0) {
+        console.error(`[alive] send failed for ${failed.length}/${results.length} user(s):`, JSON.stringify(failed));
+      } else {
+        console.log(`[alive] heartbeat sent to ${results.length} user(s)`);
+      }
+    } catch (error) {
+      console.error('[alive] error:', error);
+    }
+  },
 };
 
 async function getStableToken(appid, secret) {
